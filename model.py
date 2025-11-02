@@ -1,4 +1,11 @@
-import xgboost as xgb
+try:
+    import xgboost as xgb
+    XGB_AVAILABLE = True
+except Exception:
+    xgb = None
+    XGB_AVAILABLE = False
+    # Fallback to sklearn RandomForest if XGBoost is not available
+    from sklearn.ensemble import RandomForestClassifier as _RF
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -9,15 +16,18 @@ import joblib
 import os
 from datetime import datetime, timedelta
 from data import BitcoinDataFetcher
+from config import PREDICTION_HORIZON, MODEL_CONFIG
 import warnings
 warnings.filterwarnings('ignore')
 
 class BitcoinScalpingModel:
     def __init__(self):
         self.model = None
+        self.breakout_model = None
         self.scaler = StandardScaler()
         self.data_fetcher = BitcoinDataFetcher()
         self.model_path = "xgb_model.pkl"
+        self.breakout_model_path = "xgb_breakout_model.pkl"
         self.scaler_path = "scaler.pkl"
         self.last_retrain = None
         self.accuracy_history = []
@@ -133,27 +143,32 @@ class BitcoinScalpingModel:
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
             
-            # Train XGBoost with class weights
-            self.model = xgb.XGBClassifier(
-                n_estimators=150,  # More trees for better learning
-                max_depth=6,
-                learning_rate=0.1,
-                objective='multi:softprob',
-                random_state=42,
-                eval_metric='mlogloss',
-                scale_pos_weight=1,
-                min_child_weight=1,
-                subsample=0.8,
-                colsample_bytree=0.8
-            )
-            
-            self.model.fit(
-                X_train_scaled, y_train,
-                sample_weight=sample_weights_train,
-                eval_set=[(X_test_scaled, y_test)],
-                verbose=10,  # Show training progress
-                early_stopping_rounds=20
-            )
+            # Train model (XGBoost if available, otherwise RandomForest fallback)
+            if XGB_AVAILABLE:
+                self.model = xgb.XGBClassifier(
+                    n_estimators=150,  # More trees for better learning
+                    max_depth=6,
+                    learning_rate=0.1,
+                    objective='multi:softprob',
+                    random_state=42,
+                    eval_metric='mlogloss',
+                    scale_pos_weight=1,
+                    min_child_weight=1,
+                    subsample=0.8,
+                    colsample_bytree=0.8
+                )
+
+                self.model.fit(
+                    X_train_scaled, y_train,
+                    sample_weight=sample_weights_train,
+                    eval_set=[(X_test_scaled, y_test)],
+                    verbose=10,  # Show training progress
+                    early_stopping_rounds=20
+                )
+            else:
+                # Use RandomForest as a conservative fallback when XGBoost is not installed
+                self.model = _RF(n_estimators=200, random_state=42)
+                self.model.fit(X_train_scaled, y_train)
             
             # Evaluate
             y_pred = self.model.predict(X_test_scaled)
@@ -175,6 +190,17 @@ class BitcoinScalpingModel:
             # Save model
             joblib.dump(self.model, self.model_path)
             joblib.dump(self.scaler, self.scaler_path)
+            # Save feature importances for inspection
+            try:
+                import pandas as _pd
+                if hasattr(self.model, 'feature_importances_'):
+                    fi = _pd.DataFrame({
+                        'feature': X.columns,
+                        'importance': self.model.feature_importances_
+                    }).sort_values('importance', ascending=False)
+                    fi.to_csv('feature_importances.csv', index=False)
+            except Exception:
+                pass
             
             return True
             
@@ -191,6 +217,13 @@ class BitcoinScalpingModel:
                 self.model = joblib.load(self.model_path)
                 self.scaler = joblib.load(self.scaler_path)
                 print("✅ Model loaded successfully")
+                # Attempt to load breakout model if present
+                if os.path.exists(self.breakout_model_path):
+                    try:
+                        self.breakout_model = joblib.load(self.breakout_model_path)
+                        print("✅ Breakout model loaded successfully")
+                    except Exception as e:
+                        print(f"⚠️ Failed to load breakout model: {e}")
                 return True
             return False
         except Exception as e:
@@ -216,19 +249,34 @@ class BitcoinScalpingModel:
             
             # Optimize confidence based on prediction strength
             optimized_confidence = self.optimize_confidence(prediction_proba, confidence)
-            
-            # Check for high confidence breakout
-            is_breakout = prediction_class in [0, 4]  # STRONG_SELL or STRONG_BUY
-            is_high_confidence = optimized_confidence > 0.80
+
+            # Check for breakout with a dedicated breakout model if available
+            breakout_proba = 0.0
+            try:
+                if self.breakout_model is not None:
+                    breakout_proba = float(self.breakout_model.predict_proba(scaled_features)[0][1])
+                else:
+                    # Fallback: treat STRONG_* classes as breakout proxy
+                    breakout_proba = 1.0 if prediction_class in [0, 4] else 0.0
+            except Exception:
+                breakout_proba = 1.0 if prediction_class in [0, 4] else 0.0
+
+            # Combine multiclass confidence and breakout probability for a final confidence
+            combined_confidence = float(min(1.0, optimized_confidence * 0.7 + breakout_proba * 0.3))
+
+            is_breakout = breakout_proba > 0.5
+            is_high_confidence = combined_confidence > 0.80
             
             alert_message = ""
             if is_breakout and is_high_confidence:
                 direction = "UP" if prediction_class == 4 else "DOWN"
-                alert_message = f"🚨 BREAKOUT: {direction} in 5min ({optimized_confidence*100:.1f}% confidence)"
+                alert_message = f"🚨 BREAKOUT: {direction} in 5min ({combined_confidence*100:.1f}% confidence)"
             
             return {
                 'prediction': prediction_label,
-                'confidence': optimized_confidence,
+                'confidence': combined_confidence,
+                'raw_confidence': optimized_confidence,
+                'breakout_proba': breakout_proba,
                 'is_breakout_signal': is_breakout,
                 'is_high_confidence': is_high_confidence,
                 'alert_message': alert_message,
@@ -314,7 +362,170 @@ class BitcoinScalpingModel:
             return True
         
         time_since_retrain = datetime.now() - self.last_retrain
-        return time_since_retrain > timedelta(hours=6)
+        # Use configured retrain interval when available
+        try:
+            interval = MODEL_CONFIG.get('retrain_interval', timedelta(hours=6))
+        except Exception:
+            interval = timedelta(hours=6)
+
+        return time_since_retrain > interval
+
+    def log_prediction(self, features_row: pd.Series, prediction: dict) -> None:
+        """Log each live prediction to CSV for later labeling and retraining"""
+        try:
+            log_path = 'predictions_log.csv'
+            row = features_row.iloc[0].to_dict() if hasattr(features_row, 'iloc') else dict(features_row)
+            # Add metadata
+            row.update({
+                'pred_time': datetime.now().isoformat(),
+                'pred_label': prediction.get('prediction'),
+                'pred_confidence': float(prediction.get('confidence', 0.0)),
+                'breakout_proba': float(prediction.get('breakout_proba', 0.0)),
+                'is_labeled': False
+            })
+            df_row = pd.DataFrame([row])
+            if os.path.exists(log_path):
+                df_row.to_csv(log_path, mode='a', header=False, index=False)
+            else:
+                df_row.to_csv(log_path, index=False)
+        except Exception as e:
+            print(f"⚠️ Failed to log prediction: {e}")
+
+    def process_prediction_logs(self, horizon_minutes: int = None) -> int:
+        """Process prediction log and label entries older than horizon; append labeled rows to relabelled_training.csv
+        Returns number of newly labeled rows."""
+        try:
+            if horizon_minutes is None:
+                horizon_minutes = int(PREDICTION_HORIZON)
+
+            log_path = 'predictions_log.csv'
+            out_path = 'relabelled_training.csv'
+            if not os.path.exists(log_path):
+                return 0
+
+            df = pd.read_csv(log_path)
+            if df.empty:
+                return 0
+
+            newly_labeled = 0
+            now = datetime.utcnow()
+            for idx, row in df[df['is_labeled'] == False].iterrows():
+                try:
+                    pred_time = datetime.fromisoformat(row['pred_time'])
+                except Exception:
+                    pred_time = datetime.strptime(row['pred_time'], '%Y-%m-%dT%H:%M:%S')
+
+                target_time = pred_time + timedelta(minutes=horizon_minutes)
+                # Only label if target_time has passed
+                if target_time > datetime.now():
+                    continue
+
+                # Attempt to get future price from recent klines
+                recent = self.data_fetcher.fetch_binance_klines(interval='1m', limit=120)
+                if recent.empty:
+                    continue
+
+                # Find a close price at or after target_time
+                recent = self.data_fetcher.calculate_technical_indicators(recent)
+                # Convert index to datetime if needed
+                recent_idx = recent.index
+                future_rows = recent[recent.index >= target_time]
+                if future_rows.empty:
+                    # Can't label yet
+                    continue
+
+                future_price = float(future_rows['close'].iloc[0])
+                pred_price = float(row.get('close', np.nan)) if 'close' in row else np.nan
+                if np.isnan(pred_price):
+                    # Use last available price at pred_time
+                    past = recent[recent.index <= pred_time]
+                    if past.empty:
+                        continue
+                    pred_price = float(past['close'].iloc[-1])
+
+                price_change_pct = (future_price - pred_price) / pred_price * 100
+
+                # Simple breakout labeling rules
+                is_breakout = abs(price_change_pct) >= 0.8 and float(row.get('volume_spike_3', 1.0)) > 1.5
+
+                # Append labeled row with features and binary label
+                labeled_row = row.to_dict()
+                labeled_row['breakout_label'] = 1 if is_breakout else 0
+                labeled_row['future_price'] = future_price
+                labeled_row['pred_price'] = pred_price
+                labeled_row['price_change_pct'] = price_change_pct
+
+                # Determine basic trade success for performance tracking
+                # If prediction was BUY/STRONG_BUY and price_change_pct > 0 => success
+                # If SELL/STRONG_SELL and price_change_pct < 0 => success
+                pred_label = str(row.get('pred_label', 'HOLD'))
+                success = False
+                if pred_label in ['BUY', 'STRONG_BUY'] and price_change_pct > 0:
+                    success = True
+                elif pred_label in ['SELL', 'STRONG_SELL'] and price_change_pct < 0:
+                    success = True
+
+                labeled_row['success'] = int(success)
+
+                # Write to relabelled training file
+                df_out = pd.DataFrame([labeled_row])
+                if os.path.exists(out_path):
+                    df_out.to_csv(out_path, mode='a', header=False, index=False)
+                else:
+                    df_out.to_csv(out_path, index=False)
+
+                # Also append to trade performance log
+                perf_path = 'trade_performance.csv'
+                perf_cols = {
+                    'pred_time': labeled_row.get('pred_time'),
+                    'pred_label': labeled_row.get('pred_label'),
+                    'pred_confidence': labeled_row.get('pred_confidence'),
+                    'breakout_proba': labeled_row.get('breakout_proba'),
+                    'pred_price': labeled_row.get('pred_price'),
+                    'future_price': labeled_row.get('future_price'),
+                    'price_change_pct': labeled_row.get('price_change_pct'),
+                    'success': labeled_row.get('success')
+                }
+                perf_df = pd.DataFrame([perf_cols])
+                if os.path.exists(perf_path):
+                    perf_df.to_csv(perf_path, mode='a', header=False, index=False)
+                else:
+                    perf_df.to_csv(perf_path, index=False)
+
+                # Mark as labeled in df
+                df.at[idx, 'is_labeled'] = True
+                newly_labeled += 1
+
+            # Save back the updated log
+            df.to_csv(log_path, index=False)
+            return newly_labeled
+        except Exception as e:
+            print(f"⚠️ Failed during log processing: {e}")
+            return 0
+
+    def trigger_retrain_from_relabels(self, min_new: int = 100) -> bool:
+        """Retrain breakout model if enough relabeled samples are available"""
+        try:
+            out_path = 'relabelled_training.csv'
+            if not os.path.exists(out_path):
+                return False
+            df = pd.read_csv(out_path)
+            # Count total labeled samples
+            if df.empty or len(df) < min_new:
+                return False
+
+            # Use available feature columns (drop metadata)
+            drop_cols = ['pred_time', 'pred_label', 'pred_confidence', 'breakout_proba', 'is_labeled', 'breakout_label']
+            feature_cols = [c for c in df.columns if c not in drop_cols]
+            Xb = df[feature_cols].fillna(method='ffill').fillna(0)
+            yb = df['breakout_label']
+
+            # Train breakout model on relabeled data
+            trained = self.train_breakout_model(Xb, yb)
+            return trained
+        except Exception as e:
+            print(f"⚠️ Failed to trigger retrain from relabels: {e}")
+            return False
     
     def auto_retrain(self):
         """Auto-retrain if needed"""
@@ -328,3 +539,61 @@ class BitcoinScalpingModel:
                     print("✅ Model retrained successfully")
                 else:
                     print("❌ Retraining failed - using existing model")
+                # Also train breakout binary classifier
+                try:
+                    Xb, yb = self.prepare_breakout_training_data(X, y)
+                    if Xb is not None and len(Xb) > 100:
+                        self.train_breakout_model(Xb, yb)
+                except Exception as e:
+                    print(f"⚠️ Breakout retrain skipped: {e}")
+
+    def prepare_breakout_training_data(self, X: pd.DataFrame, y: pd.Series) -> tuple:
+        """Prepare binary breakout target: 1 for strong breakout (STRONG_BUY/STRONG_SELL), else 0"""
+        try:
+            y_binary = y.copy()
+            # Strong breakout classes are mapped to 4 (STRONG_BUY) and 0 (STRONG_SELL)
+            y_binary = y_binary.apply(lambda v: 1 if v in [0, 4] else 0)
+            return X, y_binary
+        except Exception as e:
+            print(f"❌ Failed to prepare breakout training data: {e}")
+            return None, None
+
+    def train_breakout_model(self, X: pd.DataFrame, y: pd.Series) -> bool:
+        """Train a separate binary XGBoost classifier for breakout detection"""
+        try:
+            print("🚀 Training breakout binary model...")
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+            X_train_scaled = self.scaler.fit_transform(X_train)
+            X_test_scaled = self.scaler.transform(X_test)
+
+            clf = xgb.XGBClassifier(
+                n_estimators=100,
+                max_depth=5,
+                learning_rate=0.1,
+                objective='binary:logistic',
+                random_state=42,
+                eval_metric='logloss'
+            )
+            # Use XGBoost if available, otherwise sklearn RandomForest fallback
+            if XGB_AVAILABLE:
+                clf = xgb.XGBClassifier(
+                    n_estimators=100,
+                    max_depth=5,
+                    learning_rate=0.1,
+                    objective='binary:logistic',
+                    random_state=42,
+                    eval_metric='logloss'
+                )
+                clf.fit(X_train_scaled, y_train, eval_set=[(X_test_scaled, y_test)], verbose=False, early_stopping_rounds=10)
+            else:
+                clf = _RF(n_estimators=150, random_state=42)
+                clf.fit(X_train_scaled, y_train)
+
+            # Save breakout model
+            joblib.dump(clf, self.breakout_model_path)
+            self.breakout_model = clf
+            print("✅ Breakout model trained and saved")
+            return True
+        except Exception as e:
+            print(f"❌ Breakout training failed: {e}")
+            return False

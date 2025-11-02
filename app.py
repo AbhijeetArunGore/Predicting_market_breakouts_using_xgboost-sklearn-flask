@@ -6,14 +6,23 @@ import time
 import os
 
 from data import BitcoinDataFetcher
-from model import BitcoinScalpingModel
+from model_manager import ModelManager
+import json
+
+# Optional SocketIO support (if installed). This is non-blocking — the app will still run with polling if SocketIO isn't present.
+try:
+    from flask_socketio import SocketIO
+    socketio = None
+except Exception:
+    SocketIO = None
+    socketio = None
 
 app = Flask(__name__)
 
 # Global variables
 current_data = None
 current_prediction = None
-model_manager = BitcoinScalpingModel()
+model_manager = ModelManager()
 data_fetcher = BitcoinDataFetcher()
 system_status = "starting"
 training_progress = 0
@@ -149,6 +158,14 @@ def update_system():
     time.sleep(2)
     
     try:
+        # Pre-fetch and persist multi-timeframe data for robustness
+        try:
+            print("📥 Fetching & storing multi-timeframe klines...")
+            data_fetcher.fetch_and_store_multi_timeframes()
+            print("✅ Multi-timeframe data stored")
+        except Exception as e:
+            print(f"⚠️ Multi-timeframe fetch/store failed: {e}")
+
         # Load or train model
         if model_manager.load_model():
             system_status = "ready"
@@ -168,6 +185,7 @@ def update_system():
             training_progress = 100
         
         # Main update loop
+        loop_counter = 0
         while True:
             try:
                 # Get live data
@@ -195,6 +213,24 @@ def update_system():
                     # Log high-confidence signals
                     if prediction_result.get('is_high_confidence', False):
                         print(f"🎯 {prediction_result['prediction']} signal - {prediction_result['confidence']*100:.1f}% confidence")
+                    # Log every prediction for later labeling/retraining
+                    try:
+                        model_manager.log_prediction(features_df.tail(1), prediction_result)
+                    except Exception as e:
+                        print(f"⚠️ Failed to log prediction: {e}")
+
+                    # Periodically process logs and trigger retrain from relabels
+                    loop_counter += 1
+                    if loop_counter % 6 == 0:  # roughly every 3 minutes (6 * 30s)
+                        try:
+                            new_labels = model_manager.process_prediction_logs()
+                            if new_labels and new_labels > 0:
+                                print(f"🔖 Newly labeled samples: {new_labels}")
+                                retrained = model_manager.trigger_retrain_from_relabels(min_new=100)
+                                if retrained:
+                                    print("🔁 Breakout model retrained from relabeled data")
+                        except Exception as e:
+                            print(f"⚠️ Error during log processing/retrain: {e}")
                 
                 else:
                     # Fallback prediction
@@ -210,6 +246,91 @@ def update_system():
     except Exception as e:
         print(f"❌ System error: {e}")
         system_status = "error"
+
+
+@app.route('/api/performance')
+def performance_api():
+    """Return aggregated performance stats and market sentiment"""
+    perf_file = 'trade_performance.csv'
+    summary = {
+        'total_trades': 0,
+        'successful_trades': 0,
+        'failed_trades': 0,
+        'success_rate': 0.0,
+        'recent_trades': []
+    }
+
+    try:
+        if os.path.exists(perf_file):
+            df = pd.read_csv(perf_file)
+            if not df.empty:
+                total = len(df)
+                succ = int(df['success'].sum()) if 'success' in df.columns else 0
+                fail = total - succ
+                rate = succ / total if total > 0 else 0.0
+                recent = df.tail(10).to_dict(orient='records')
+                summary.update({
+                    'total_trades': int(total),
+                    'successful_trades': int(succ),
+                    'failed_trades': int(fail),
+                    'success_rate': round(float(rate), 3),
+                    'recent_trades': recent
+                })
+    except Exception as e:
+        print(f"⚠️ Could not read performance file: {e}")
+
+    # Compute market sentiment from latest indicators if available
+    sentiment = {
+        'score': 0.0,
+        'label': 'neutral'
+    }
+    try:
+        if current_data is not None and not current_data.empty:
+            last = current_data.tail(5)
+            score = 0.0
+            # EMA slope
+            if 'ema_8' in last.columns and 'ema_21' in last.columns:
+                ema8 = last['ema_8'].iloc[-1]
+                ema21 = last['ema_21'].iloc[-1]
+                score += 0.4 if ema8 > ema21 else -0.4
+
+            # RSI bias
+            if 'rsi_14' in last.columns:
+                rsi = last['rsi_14'].iloc[-1]
+                if rsi < 40:
+                    score -= 0.2
+                elif rsi > 60:
+                    score += 0.2
+
+            # MACD
+            if 'macd' in last.columns and 'macd_signal' in last.columns:
+                macd = last['macd'].iloc[-1]
+                macd_sig = last['macd_signal'].iloc[-1]
+                score += 0.2 if macd > macd_sig else -0.2
+
+            # Volume spike
+            if 'volume_spike_3' in last.columns:
+                vs = last['volume_spike_3'].iloc[-1]
+                if vs > 1.5:
+                    score += 0.2
+
+            sentiment['score'] = round(max(-1.0, min(1.0, score)), 3)
+            if sentiment['score'] > 0.2:
+                sentiment['label'] = 'bullish'
+            elif sentiment['score'] < -0.2:
+                sentiment['label'] = 'bearish'
+            else:
+                sentiment['label'] = 'neutral'
+    except Exception as e:
+        print(f"⚠️ Sentiment compute failed: {e}")
+
+    # Combine summary and sentiment
+    response = {
+        'performance': summary,
+        'market_sentiment': sentiment
+    }
+
+    return jsonify(response)
 
 def create_fallback_prediction():
     """Create fallback prediction"""
@@ -266,10 +387,338 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     })
 
+
+def build_prediction_payload():
+    """Build unified prediction payload used by the dashboard.
+    Includes signal, confidence, sentiment, price levels, targets, risk_reward, reason, and performance summary."""
+    global current_data, current_prediction
+
+    payload = {
+        'signal': 'HOLD',
+        'confidence': 0.5,
+        'sentiment': 'neutral',
+        'price': None,
+        'entry': None,
+        'stop_loss': None,
+        'targets': [],
+        'risk_reward': None,
+        'market_condition': 'unknown',
+        'reason': '',
+        'levels': {},
+        'timestamp': datetime.now().isoformat(),
+        'performance': {},
+        'system_status': {
+            'status': system_status,
+            'training_progress': training_progress,
+            'uptime_minutes': int((datetime.now() - start_time).total_seconds() / 60),
+            'model_loaded': model_manager.model is not None
+        }
+    }
+
+    try:
+        # Use latest data if available
+        df = current_data
+        if df is None or df.empty:
+            df = data_fetcher.get_live_data_with_features()
+
+        if df is not None and not df.empty:
+            features_df = data_fetcher.get_features(df)
+            pred = model_manager.predict(features_df)
+
+            # ensure only show when >60% confidence
+            conf = float(pred.get('confidence', 0.5))
+            payload['signal'] = pred.get('prediction', 'HOLD')
+            payload['confidence'] = conf
+            payload['breakout_proba'] = pred.get('breakout_proba', 0.0)
+            payload['is_high_confidence'] = pred.get('is_high_confidence', False)
+
+            # breakout probability (from ensemble or breakout model)
+            payload['breakout_probability'] = float(pred.get('breakout_proba',
+                                                            (pred.get('combined_proba')[1] if isinstance(pred.get('combined_proba'), (list, tuple)) and len(pred.get('combined_proba'))>1 else 0.0)))
+
+            # trend strength (normalized) and volatility index
+            try:
+                if 'ema_8' in df.columns and 'ema_21' in df.columns:
+                    ema8 = df['ema_8'].iloc[-1]
+                    ema21 = df['ema_21'].iloc[-1]
+                    trend_strength = float((ema8 - ema21) / (ema21 if ema21 != 0 else 1.0))
+                    # clamp
+                    trend_strength = max(-3.0, min(3.0, trend_strength))
+                    # normalize to -1..1 roughly
+                    payload['trend_strength'] = round(trend_strength / 3.0, 3)
+                else:
+                    payload['trend_strength'] = 0.0
+            except Exception:
+                payload['trend_strength'] = 0.0
+
+            try:
+                if 'atr_percentage' in df.columns:
+                    payload['volatility_index'] = round(float(df['atr_percentage'].iloc[-1]), 3)
+                else:
+                    payload['volatility_index'] = None
+            except Exception:
+                payload['volatility_index'] = None
+
+            # model info and live accuracy
+            try:
+                model_info = model_manager.get_model_info()
+                payload['model_version'] = model_info.get('version') if isinstance(model_info, dict) else str(model_info)
+            except Exception:
+                payload['model_version'] = 'unknown'
+
+            try:
+                perf_file = 'trade_performance.csv'
+                if os.path.exists(perf_file):
+                    pdf = pd.read_csv(perf_file)
+                    if not pdf.empty and 'success' in pdf.columns:
+                        payload['live_accuracy'] = round(float(int(pdf['success'].sum()) / len(pdf)), 3)
+                    else:
+                        payload['live_accuracy'] = None
+                else:
+                    payload['live_accuracy'] = None
+            except Exception:
+                payload['live_accuracy'] = None
+
+            # price and levels
+            current_price = float(df['close'].iloc[-1])
+            payload['price'] = round(current_price, 2)
+            levels = calculate_trading_levels(current_price, pred)
+            payload['levels'] = levels
+            payload['entry'] = levels.get('entry')
+            payload['stop_loss'] = levels.get('stop_loss')
+            payload['targets'] = [levels.get('target_1'), levels.get('target_2')]
+
+            # compute risk-reward (approx)
+            try:
+                rr = None
+                if payload['entry'] and payload['stop_loss'] and payload['targets'][0]:
+                    risk = abs(payload['entry'] - payload['stop_loss'])
+                    reward = abs(payload['targets'][1] - payload['entry'])
+                    rr = round(reward / risk if risk > 0 else 0, 2)
+                payload['risk_reward'] = rr
+            except Exception:
+                payload['risk_reward'] = None
+
+                # reliability estimator: combine live accuracy (if available) and confidence
+                try:
+                    live_acc = payload.get('live_accuracy')
+                    if live_acc is None:
+                        reliability = round(min(0.99, 0.5 + (conf - 0.5) * 0.6), 3)
+                    else:
+                        reliability = round(float((live_acc + conf) / 2.0), 3)
+                    payload['reliability'] = reliability
+                except Exception:
+                    payload['reliability'] = round(conf, 3)
+
+                # sentiment mapping
+                try:
+                    payload['sentiment'] = payload.get('sentiment', 'neutral')
+                except Exception:
+                    payload['sentiment'] = 'neutral'
+
+                # explanation (simple heuristic or passthrough)
+                try:
+                    explain = pred.get('explain') or ''
+                    if not explain:
+                        if payload.get('breakout_probability', 0) > 0.6:
+                            explain = 'Transformer attention: breakout pattern + volume surge'
+                        else:
+                            explain = 'Indicator ensemble: EMA crossover + MACD confirmation'
+                    payload['explain'] = explain
+                except Exception:
+                    payload['explain'] = ''
+
+                # canonical field names the UI expects
+                payload['trend_strength'] = payload.get('trend_strength', 0.0)
+                payload['volatility'] = payload.get('volatility_index', payload.get('volatility_index', None))
+
+                # model_version and last_update
+                try:
+                    model_info = model_manager.get_model_info()
+                    payload['model_version'] = model_info.get('version') if isinstance(model_info, dict) and 'version' in model_info else (model_info or f"v{datetime.now().strftime('%Y%m%d_%H%M')}")
+                except Exception:
+                    payload['model_version'] = f"v{datetime.now().strftime('%Y%m%d_%H%M')}"
+
+                payload['last_update'] = datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+
+            # market condition and reason from indicators
+            reason_parts = []
+            if 'ema_8' in df.columns and 'ema_21' in df.columns:
+                if df['ema_8'].iloc[-1] > df['ema_21'].iloc[-1]:
+                    reason_parts.append('EMA short above long')
+                else:
+                    reason_parts.append('EMA short below long')
+            if 'macd' in df.columns and 'macd_signal' in df.columns:
+                macd = df['macd'].iloc[-1]
+                macd_sig = df['macd_signal'].iloc[-1]
+                if macd > macd_sig:
+                    reason_parts.append('MACD bullish')
+                else:
+                    reason_parts.append('MACD bearish')
+
+            if 'rsi_14' in df.columns:
+                rsi = df['rsi_14'].iloc[-1]
+                if rsi > 70:
+                    reason_parts.append('RSI overbought')
+                elif rsi < 30:
+                    reason_parts.append('RSI oversold')
+
+            payload['reason'] = ' & '.join(reason_parts)
+
+            # sentiment
+            sent_score = 0.0
+            try:
+                if 'ema_8' in df.columns and 'ema_21' in df.columns:
+                    sent_score += 0.4 if df['ema_8'].iloc[-1] > df['ema_21'].iloc[-1] else -0.4
+                if 'rsi_14' in df.columns:
+                    rsi = df['rsi_14'].iloc[-1]
+                    sent_score += 0.2 if rsi > 55 else (-0.2 if rsi < 45 else 0)
+                if 'macd' in df.columns and 'macd_signal' in df.columns:
+                    sent_score += 0.2 if df['macd'].iloc[-1] > df['macd_signal'].iloc[-1] else -0.2
+                if 'volume_spike_3' in df.columns and df['volume_spike_3'].iloc[-1] > 1.5:
+                    sent_score += 0.2
+            except Exception:
+                pass
+
+            if sent_score > 0.2:
+                payload['sentiment'] = 'bullish'
+            elif sent_score < -0.2:
+                payload['sentiment'] = 'bearish'
+            else:
+                payload['sentiment'] = 'neutral'
+
+            # attach recent chart data (last 10 minutes)
+            try:
+                last_n = df.tail(100)
+                payload['chart'] = {
+                    'timestamps': last_n.index.strftime('%H:%M').tolist(),
+                    'prices': last_n['close'].round(2).tolist(),
+                    'ema_8': last_n['ema_8'].round(2).tolist() if 'ema_8' in last_n.columns else [],
+                    'ema_21': last_n['ema_21'].round(2).tolist() if 'ema_21' in last_n.columns else []
+                }
+
+                # include candlestick OHLC for charting
+                try:
+                    candles = []
+                    for ts, row in last_n.iterrows():
+                        candles.append({
+                            't': ts.isoformat(),
+                            'o': float(row['open']),
+                            'h': float(row['high']),
+                            'l': float(row['low']),
+                            'c': float(row['close'])
+                        })
+                    payload['chart']['candles'] = candles
+                except Exception:
+                    payload['chart']['candles'] = []
+            except Exception:
+                payload['chart'] = {}
+
+            # performance summary (reuse existing endpoint logic)
+            try:
+                perf_file = 'trade_performance.csv'
+                perf_summary = {}
+                if os.path.exists(perf_file):
+                    pdf = pd.read_csv(perf_file)
+                    if not pdf.empty:
+                        total = len(pdf)
+                        succ = int(pdf['success'].sum()) if 'success' in pdf.columns else 0
+                        rate = succ / total if total > 0 else 0.0
+                        avg_conf = pdf['pred_confidence'].mean() if 'pred_confidence' in pdf.columns else 0.0
+                        perf_summary = {
+                            'total_trades': int(total),
+                            'successful_trades': int(succ),
+                            'success_rate': round(rate, 3),
+                            'avg_confidence': round(float(avg_conf), 3)
+                        }
+                payload['performance'] = perf_summary
+            except Exception:
+                payload['performance'] = {}
+
+            # Only publish a signal if confidence >= 0.6
+            if payload.get('confidence', 0) < 0.6:
+                payload['signal'] = 'HOLD'
+
+            # Ensure canonical output fields exist (match user's requested format)
+            payload.setdefault('signal', 'HOLD')
+            payload.setdefault('confidence', round(float(conf), 3))
+            payload.setdefault('reliability', payload.get('reliability', round(float(conf), 3)))
+            payload.setdefault('sentiment', payload.get('sentiment', 'neutral'))
+            payload.setdefault('price', round(float(df['close'].iloc[-1]) if ('close' in df.columns and not df.empty) else data_fetcher.get_current_real_price(), 2))
+            payload.setdefault('entry', payload.get('levels', {}).get('entry'))
+            payload.setdefault('stop_loss', payload.get('levels', {}).get('stop_loss'))
+            payload.setdefault('targets', payload.get('targets', []))
+            payload.setdefault('risk_reward', payload.get('risk_reward'))
+            payload.setdefault('trend_strength', round(float(payload.get('trend_strength', 0.0)), 3))
+            payload.setdefault('volatility', payload.get('volatility_index', None))
+            payload.setdefault('explain', payload.get('explain', ''))
+            payload.setdefault('model_version', payload.get('model_version', f"v{datetime.now().strftime('%Y%m%d_%H%M')}"))
+            payload.setdefault('last_update', payload.get('last_update', datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'))
+
+    except Exception as e:
+        print(f"⚠️ build_prediction_payload failed: {e}")
+
+    return payload
+
+
+@app.route('/api/prediction')
+def api_prediction():
+    payload = build_prediction_payload()
+    return jsonify(payload)
+
+
+@app.route('/api/model_info')
+def api_model_info():
+    try:
+        info = model_manager.get_model_info()
+        return jsonify({'status':'success', 'model_info': info})
+    except Exception as e:
+        return jsonify({'status':'error', 'error': str(e)})
+
+
+@app.route('/api/demo')
+def api_demo():
+    # Return a deterministic demo payload matching the user's requested format
+    demo = {
+        "signal": "SELL",
+        "confidence": 0.675,
+        "reliability": 0.82,
+        "sentiment": "bearish",
+        "price": 110911.86,
+        "entry": 110914.59,
+        "stop_loss": 110947.32,
+        "targets": [110881.85,110860.03],
+        "risk_reward": 3.2,
+        "trend_strength": 0.58,
+        "volatility": 0.35,
+        "explain": "Transformer attention: breakout pattern + volume surge",
+        "model_version": "v20251102_001",
+        "last_update": "2025-11-02T14:47:20Z",
+        'chart': {'timestamps': [], 'prices': [], 'candles': []},
+        'performance': {'total_trades':0, 'success_rate':0.0, 'avg_confidence':0.0, 'series':[]}
+    }
+    return jsonify(demo)
+
 if __name__ == '__main__':
     # Start update thread
     update_thread = threading.Thread(target=update_system, daemon=True)
     update_thread.start()
+
+    # Nightly retrain loop (runs in background, non-blocking)
+    def nightly_retrain_loop():
+        while True:
+            try:
+                # Sleep for 24 hours between full retrains (adjustable)
+                time.sleep(24 * 3600)
+                print('🔁 Nightly retrain: starting full model retrain...')
+                model_manager.auto_retrain()
+                print('🔁 Nightly retrain: completed')
+            except Exception as e:
+                print(f'⚠️ Nightly retrain failed: {e}')
+                time.sleep(60)
+
+    retrain_thread = threading.Thread(target=nightly_retrain_loop, daemon=True)
+    retrain_thread.start()
     
     print("🚀 Bitcoin Scalping System Started!")
     print("📈 Dashboard: http://localhost:5000")

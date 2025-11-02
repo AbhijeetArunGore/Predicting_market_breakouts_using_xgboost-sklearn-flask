@@ -9,7 +9,7 @@ SYMBOL = "BTCUSDT"
 
 # Ultra-Fast Scalping Parameters
 TIMEFRAME = "1m"
-PREDICTION_HORIZON = 5
+PREDICTION_HORIZON = 10  # minutes ahead to predict breakouts
 REWARD_RISK_RATIO = 3.0
 
 # Advanced Technical Indicators
@@ -21,6 +21,7 @@ VOLUME_SENSITIVITY = 2.0
 MODEL_CONFIG = {
     'output_classes': ['STRONG_SELL', 'SELL', 'HOLD', 'BUY', 'STRONG_BUY'],
     'prediction_horizon': 'next_5_minutes',
+    'prediction_horizon_minutes': 10,
     'retrain_interval': timedelta(hours=4),
     'confidence_thresholds': {
         'STRONG_BUY': 0.90,

@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from technical_analysis import TechnicalAnalysis as ta
 import json
 import os
+from db import init_db, save_klines, get_klines
 
 class BitcoinDataFetcher:
     def __init__(self):
@@ -41,9 +42,16 @@ class BitcoinDataFetcher:
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
             
+            if df.empty:
+                print("⚠️ Binance returned no kline data (empty).")
+                return pd.DataFrame()
+
             print(f"✅ Successfully fetched {len(df)} records")
-            print(f"💰 Latest price: ${df['close'].iloc[-1]:.2f}")
-            
+            try:
+                print(f"💰 Latest price: ${df['close'].iloc[-1]:.2f}")
+            except Exception:
+                print("⚠️ Could not read latest price from fetched data")
+
             return df[['open', 'high', 'low', 'close', 'volume']]
             
         except Exception as e:
@@ -96,6 +104,13 @@ class BitcoinDataFetcher:
             macd, macd_signal, macd_hist = ta.MACD(df['close'])
             df['macd'] = macd
             df['macd_signal'] = macd_signal
+
+            # VWAP (intraday cumulative)
+            try:
+                typical_price = (df['high'] + df['low'] + df['close']) / 3.0
+                df['vwap'] = (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
+            except Exception:
+                df['vwap'] = df['close']
             
             # Stochastic
             stoch_k, stoch_d = ta.STOCH(df['high'], df['low'], df['close'], 14)
@@ -108,6 +123,8 @@ class BitcoinDataFetcher:
             # Price relationships
             df['price_vs_ema3'] = (df['close'] - df['ema_3']) / df['ema_3'] * 100
             df['price_vs_ema8'] = (df['close'] - df['ema_8']) / df['ema_8'] * 100
+            # Open Interest placeholder (may be filled from futures API)
+            df['open_interest'] = df.get('open_interest', pd.Series([pd.NA] * len(df), index=df.index))
             
             # Market structure
             df['support_level'] = df['low'].rolling(10).min()
@@ -131,6 +148,7 @@ class BitcoinDataFetcher:
         price_change_pct = (future_price - df['close']) / df['close'] * 100
         
         # Enhanced breakout detection
+        # Thresholds tuned for breakout detection over the given horizon
         conditions = [
             (price_change_pct >= 0.8) & (df['volume_spike_3'] > 1.5),
             (price_change_pct >= 0.3) & (price_change_pct < 0.8),
@@ -166,24 +184,50 @@ class BitcoinDataFetcher:
     
     def get_live_data_with_features(self) -> pd.DataFrame:
         """Get live data with all technical indicators"""
-        df = self.fetch_binance_klines(interval="1m", limit=100)
+        df = self.fetch_binance_klines(interval="1m", limit=200)
         
         if not df.empty:
             df = self.calculate_technical_indicators(df)
-            df = self.create_target_variable(df)
+            # Do not create target for live feed by default
+            df = self.create_target_variable(df, horizon=10)
+            # Store into sqlite for persistence
+            try:
+                init_db()
+                save_klines(df[['open','high','low','close','volume','open_interest']], symbol=self.symbol, interval='1m')
+            except Exception:
+                pass
         
         return df
     
     def get_training_data(self, days: int = 30) -> pd.DataFrame:
         """Get training data"""
-        df = self.fetch_binance_klines(interval="5m", limit=1000)
-        
-        if not df.empty:
-            df = self.calculate_technical_indicators(df)
-            df = self.create_target_variable(df)
-        else:
-            # Create synthetic data for training
-            df = self.create_synthetic_data()
+        # Prefer data from local DB for persistence
+        try:
+            init_db()
+            df = get_klines(symbol=self.symbol, interval='1m', limit=3000)
+            if not df.empty:
+                df = self.calculate_technical_indicators(df)
+                df = self.create_target_variable(df, horizon=10)
+            else:
+                df = self.fetch_binance_klines(interval="1m", limit=2000)
+                if not df.empty:
+                    df = self.calculate_technical_indicators(df)
+                    df = self.create_target_variable(df, horizon=10)
+                    # store fetched
+                    try:
+                        save_klines(df[['open','high','low','close','volume','open_interest']], symbol=self.symbol, interval='1m')
+                    except Exception:
+                        pass
+                else:
+                    df = self.create_synthetic_data()
+        except Exception:
+            # Fallback to direct fetch
+            df = self.fetch_binance_klines(interval="1m", limit=2000)
+            if not df.empty:
+                df = self.calculate_technical_indicators(df)
+                df = self.create_target_variable(df, horizon=10)
+            else:
+                df = self.create_synthetic_data()
         
         return df
     
@@ -205,6 +249,32 @@ class BitcoinDataFetcher:
         }, index=dates)
         
         df = self.calculate_technical_indicators(df)
-        df = self.create_target_variable(df)
+        df = self.create_target_variable(df, horizon=10)
         
         return df
+
+    def fetch_and_store_multi_timeframes(self, intervals=None, limits=None):
+        """Fetch multiple timeframe klines and persist them to the local DB."""
+        if intervals is None:
+            intervals = ['1m', '5m', '10m', '15m']
+        if limits is None:
+            limits = { '1m': 2000, '5m': 2000, '10m': 1000, '15m': 1000 }
+
+        results = {}
+        for iv in intervals:
+            try:
+                lim = limits.get(iv, 1000)
+                df = self.fetch_binance_klines(interval=iv, limit=lim)
+                if df.empty:
+                    continue
+                df = self.calculate_technical_indicators(df)
+                # store only needed columns
+                try:
+                    save_klines(df[['open','high','low','close','volume','open_interest']], symbol=self.symbol, interval=iv)
+                except Exception:
+                    pass
+                results[iv] = df
+            except Exception:
+                continue
+
+        return results

@@ -1,282 +1,255 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bitcoin Scalping System</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: #0f0f23; color: white; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header { text-align: center; margin-bottom: 30px; padding: 20px; background: #1a1a2e; border-radius: 10px; }
-        .card { background: #1a1a2e; border-radius: 10px; padding: 20px; margin: 10px 0; border: 1px solid #2d2d4d; }
-        .signal { font-size: 2.5em; font-weight: bold; text-align: center; margin: 20px 0; }
-        .strong-buy { color: #00ff88; }
-        .buy { color: #50fa7b; }
-        .hold { color: #8be9fd; }
-        .sell { color: #ffb86c; }
-        .strong-sell { color: #ff5555; }
-        .levels { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 15px; }
-        .level-item { background: #2d2d4d; padding: 10px; border-radius: 5px; text-align: center; }
-        .loading { text-align: center; padding: 40px; color: #8be9fd; }
-        .alert { background: rgba(255,85,85,0.2); padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #ff5555; }
-        .chart-container { height: 300px; margin: 20px 0; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚀 Bitcoin Scalping Breakout System</h1>
-            <p>Live AI Predictions - Real Market Data - Updates Every 30 Seconds</p>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bitcoin Scalping Dashboard</title>
+
+  <!-- Chart.js + Financial plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    :root { --bg:#08101a; --card:#0e1620; --muted:#9fb0c8; --accent:#00e6a8; }
+    *{box-sizing:border-box}
+    body{font-family:Inter, Arial, sans-serif;background:var(--bg);color:#e6f3fb;margin:0;padding:14px}
+    .wrap{max-width:1180px;margin:0 auto}
+    .header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{font-size:20px;margin:0}
+    .controls{display:flex;gap:8px}
+    button{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);padding:8px 10px;border-radius:8px;cursor:pointer}
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width,initial-scale=1" />
+      <title>Bitcoin Scalping Dashboard</title>
+      <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js"></script>
+      <style>
+      :root{ --bg:#08101a; --card:#0e1620; --muted:#9fb0c8; --accent:#00e6a8; }
+      *{box-sizing:border-box}
+      body{font-family:Inter, Arial, sans-serif;background:var(--bg);color:#e6f3fb;margin:0;padding:14px}
+      .wrap{max-width:1180px;margin:0 auto}
+      .header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+      h1{font-size:20px;margin:0}
+      .controls{display:flex;gap:8px;align-items:center}
+      button{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);padding:8px 10px;border-radius:8px;cursor:pointer}
+      .small{color:var(--muted);font-size:13px}
+      .card{background:var(--card);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-top:12px}
+      .signal{font-size:28px;font-weight:700;text-align:center;margin:8px 0}
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Bitcoin Scalping Dashboard</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js"></script>
+        <style>
+          :root{ --bg:#08101a; --card:#0e1620; --muted:#9fb0c8; --accent:#00e6a8; }
+          *{box-sizing:border-box}
+          body{font-family:Inter, Arial, sans-serif;background:var(--bg);color:#e6f3fb;margin:0;padding:14px}
+          .wrap{max-width:1180px;margin:0 auto}
+          .header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+          h1{font-size:20px;margin:0}
+          .controls{display:flex;gap:8px;align-items:center}
+          button{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);padding:8px 10px;border-radius:8px;cursor:pointer}
+          .small{color:var(--muted);font-size:13px}
+          .card{background:var(--card);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-top:12px}
+          .signal{font-size:28px;font-weight:700;text-align:center;margin:8px 0}
+          .grid{display:grid;grid-template-columns:1fr 360px;gap:12px;margin-top:14px}
+          canvas{width:100%!important;height:260px!important}
+          @media (max-width:980px){.grid{grid-template-columns:1fr}canvas{height:200px!important}}
+          .meta-row{display:flex;justify-content:space-between;align-items:center}
+          .levels-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+          .muted{color:var(--muted)}
+        </style>
+      </head>
+      <body>
+        <div class="wrap">
+          <div class="header">
+            <div>
+              <h1>🚀 Bitcoin Scalping Dashboard</h1>
+              <div class="small">Live AI Predictions • Polling every 3s</div>
+            </div>
+            <div class="controls">
+              <div id="data-source" class="small">Source: --</div>
+              <button id="demoBtn">Show Demo</button>
+              <button id="refreshBtn">Refresh</button>
+            </div>
+          </div>
+
+          <div id="alert" class="small" style="margin-top:10px;display:none;color:#ffd2d2"></div>
+
+          <div class="card">
+            <div class="meta-row">
+              <div>
+                <div class="small">Model: <span id="model_version">--</span></div>
+                <div class="small">Last update: <span id="last_update">--</span></div>
+              </div>
+              <div style="text-align:right">
+                <div class="small">Live accuracy: <span id="live_accuracy">--</span></div>
+                <div class="small">Reliability: <span id="reliability">--</span></div>
+              </div>
+            </div>
+
+            <div class="signal" id="signal">--</div>
+
+            <div style="display:flex;gap:12px;align-items:center">
+              <div style="width:140px;text-align:center">
+                <canvas id="confGauge" width="140" height="140"></canvas>
+                <div class="small">Confidence</div>
+              </div>
+              <div style="flex:1">
+                <div class="small">Explain</div>
+                <div id="explain" style="font-weight:600;margin-top:6px">--</div>
+                <div style="margin-top:8px" class="small">Sentiment: <strong id="sentiment">--</strong></div>
+              </div>
+            </div>
+
+            <div class="levels-grid" style="margin-top:12px">
+              <div class="small">Price<div id="price">--</div></div>
+              <div class="small">Entry<div id="entry">--</div></div>
+              <div class="small">Stop Loss<div id="stop_loss">--</div></div>
+            </div>
+
+            <div class="levels-grid" style="margin-top:8px">
+              <div class="small">Target 1<div id="target_1">--</div></div>
+              <div class="small">Target 2<div id="target_2">--</div></div>
+              <div class="small">R:R<div id="risk_reward">--</div></div>
+            </div>
+
+            <div style="display:flex;gap:12px;margin-top:10px;align-items:center;justify-content:space-between">
+              <div class="small">Trend Strength: <strong id="trend_strength">--</strong></div>
+              <div class="small">Volatility: <strong id="volatility">--</strong></div>
+              <div class="small">Breakout Proba: <strong id="breakout_probability">--</strong></div>
+            </div>
+          </div>
+
+          <div class="grid">
+            <div>
+              <div class="card">
+                <div class="small">Price (line)</div>
+                <canvas id="lineChart"></canvas>
+              </div>
+
+              <div class="card">
+                <div class="small">Candles (last 100)</div>
+                <canvas id="candleChart"></canvas>
+              </div>
+            </div>
+
+            <div>
+              <div class="card">
+                <div class="small">Performance</div>
+                <div style="margin-top:8px">Total trades: <strong id="total_trades">--</strong></div>
+                <div style="margin-top:4px">Success rate: <strong id="success_rate">--</strong></div>
+                <div style="margin-top:4px">Avg conf: <strong id="avg_conf">--</strong></div>
+                <canvas id="perfSpark" style="margin-top:8px;height:120px"></canvas>
+              </div>
+
+              <div class="card">
+                <h3>System Status</h3>
+                <div id="system_status">--</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Trade Suggestion</h3>
+            <div id="trade_suggestion">--</div>
+          </div>
+
         </div>
-        
-        <div id="loading" class="loading">
-            <p>🔄 Loading market data and AI model...</p>
-            <p>System is learning from real Bitcoin prices</p>
-        </div>
-        
-        <div id="dashboard" style="display: none;">
-            <!-- Alert Box -->
-            <div id="alert-box" class="alert" style="display: none;"></div>
-            
-            <!-- Main Prediction -->
-            <div class="card">
-                <h2>🎯 Live Trading Signal</h2>
-                <div id="signal" class="signal">--</div>
-                <div id="confidence" style="text-align: center; font-size: 1.3em; color: #f1fa8c;">
-                    Confidence: --%
-                </div>
-                <div id="alert-message" style="margin: 15px 0; padding: 10px; background: rgba(0,255,136,0.2); border-radius: 5px; display: none;"></div>
-            </div>
 
-            <!-- Trading Levels -->
-            <div class="grid">
-                <div class="card">
-                    <h2>💰 Trading Levels</h2>
-                    <div class="levels">
-                        <div class="level-item"><div>Current Price</div><div id="current-price" style="font-weight: bold;">--</div></div>
-                        <div class="level-item"><div>Entry</div><div id="entry-price" style="font-weight: bold;">--</div></div>
-                        <div class="level-item"><div>Stop Loss</div><div id="stop-loss" style="font-weight: bold;">--</div></div>
-                        <div class="level-item"><div>Target 1</div><div id="target-1" style="font-weight: bold;">--</div></div>
-                        <div class="level-item"><div>Target 2</div><div id="target-2" style="font-weight: bold;">--</div></div>
-                    </div>
-                </div>
+        <script>
+          // State
+          window._demo_active = false;
 
-                <div class="card">
-                    <h2>💡 Trade Suggestion</h2>
-                    <div id="trade-suggestion">
-                        <p>System analyzing market conditions...</p>
-                    </div>
-                </div>
-            </div>
+          // draw gauge
+          function drawGauge(id, pct){
+            const canvas = document.getElementById(id); if(!canvas) return; const ctx = canvas.getContext('2d'); const w=canvas.width, h=canvas.height; ctx.clearRect(0,0,w,h);
+            const r = Math.min(w,h)/2 - 8, cx=w/2, cy=h/2; ctx.lineWidth=12; ctx.beginPath(); ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+            const start=-Math.PI/2, end = start + Math.max(0,Math.min(1,pct)) * Math.PI*2; const grad=ctx.createLinearGradient(0,0,w,h); grad.addColorStop(0,'#00e6a8'); grad.addColorStop(1,'#00b4db'); ctx.strokeStyle=grad; ctx.beginPath(); ctx.arc(cx,cy,r,start,end); ctx.stroke();
+            ctx.fillStyle='#e6eef8'; ctx.font='18px Inter, Arial'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(Math.round(pct*100)+'%',cx,cy);
+          }
 
-            <!-- Chart -->
-            <div class="card">
-                <h2>📈 Live Price Chart</h2>
-                <div class="chart-container">
-                    <canvas id="priceChart"></canvas>
-                </div>
-            </div>
+          // charts
+          let lineChart=null, candleChart=null, perfChart=null;
+          function renderLine(labels, prices){
+            try{
+              const ctx = document.getElementById('lineChart').getContext('2d'); if(lineChart) lineChart.destroy(); lineChart = new Chart(ctx,{type:'line',data:{labels:labels,datasets:[{label:'Price',data:prices,borderColor:'#00b4db',backgroundColor:'rgba(0,180,219,0.06)',fill:true,pointRadius:0}]},options:{animation:{duration:200},scales:{x:{ticks:{color:'#9fb0c8'}},y:{ticks:{color:'#9fb0c8'}}},plugins:{legend:{display:false}}});
+            }catch(e){console.warn(e)}
+          }
+          function renderCandles(candles){
+            try{
+              const ctx = document.getElementById('candleChart').getContext('2d');
+              const data = candles.map(c=>({x:new Date(c.t),o:c.o,h:c.h,l:c.l,c:c.c}));
+              if(candleChart) candleChart.destroy();
+              candleChart = new Chart(ctx,{type:'candlestick',data:{datasets:[{label:'BTC',data:data}]},options:{plugins:{legend:{display:false}},scales:{x:{type:'time',time:{tooltipFormat:'HH:mm'},ticks:{color:'#9fb0c8'}},y:{ticks:{color:'#9fb0c8'}}}});
+            }catch(e){console.warn('candles',e)}
+          }
+          function renderPerf(series){
+            try{ const ctx=document.getElementById('perfSpark').getContext('2d'); if(perfChart) perfChart.destroy(); perfChart = new Chart(ctx,{type:'bar',data:{labels:series.map((_,i)=>i),datasets:[{data:series,backgroundColor:'rgba(80,250,123,0.6)'}]},options:{plugins:{legend:{display:false}},scales:{x:{display:false},y:{display:false}}}});
+            }catch(e){}
+          }
 
-            <!-- Status -->
-            <div class="card">
-                <h2>🤖 System Status</h2>
-                <div id="system-status">
-                    <p>🔄 System initializing...</p>
-                </div>
-            </div>
-            
-            <div id="last-update" style="text-align: center; color: #8892b0; margin-top: 20px;">
-                Last updated: --
-            </div>
-        </div>
-    </div>
+          // apply payload
+          function applyPayload(p, source){
+            try{
+              document.getElementById('signal').textContent = p.signal || p.prediction || 'HOLD';
+              document.getElementById('model_version').textContent = p.model_version || '--';
+              document.getElementById('last_update').textContent = p.last_update ? new Date(p.last_update).toLocaleString() : '--';
+              document.getElementById('live_accuracy').textContent = p.live_accuracy!=null ? (p.live_accuracy*100).toFixed(1)+'%' : '--';
+              document.getElementById('reliability').textContent = p.reliability!=null ? (p.reliability*100).toFixed(1)+'%' : '--';
+              document.getElementById('explain').textContent = p.explain || p.reason || '--';
+              document.getElementById('sentiment').textContent = p.sentiment || '--';
+              document.getElementById('price').textContent = p.price!=null ? '$'+Number(p.price).toLocaleString() : '--';
+              document.getElementById('entry').textContent = p.entry!=null ? '$'+Number(p.entry).toLocaleString() : '--';
+              document.getElementById('stop_loss').textContent = p.stop_loss!=null ? '$'+Number(p.stop_loss).toLocaleString() : '--';
 
-    <script>
-        let priceChart = null;
-        
-        function showAlert(message, type = 'info') {
-            const alertBox = document.getElementById('alert-box');
-            alertBox.innerHTML = message;
-            alertBox.style.display = 'block';
-            if (type === 'alert') {
-                alertBox.style.background = 'rgba(255,85,85,0.2)';
-                alertBox.style.borderLeftColor = '#ff5555';
-            }
-        }
-        
-        function updateDashboard(data) {
-            if (!data.prediction) {
-                document.getElementById('loading').innerHTML = '<p>🔄 Loading predictions...</p>';
-                return;
-            }
-            
-            const prediction = data.prediction;
-            const systemStatus = data.system_status;
-            
-            // Update prediction
-            updatePrediction(prediction);
-            
-            // Update system status
-            updateSystemStatus(systemStatus);
-            
-            // Update chart
-            if (data.chart_data) {
-                updateChart(data.chart_data);
-            }
-            
-            // Show dashboard
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('dashboard').style.display = 'block';
-        }
-        
-        function updatePrediction(prediction) {
-            // Update signal
-            const signalElement = document.getElementById('signal');
-            signalElement.textContent = prediction.prediction;
-            signalElement.className = `signal ${prediction.prediction.toLowerCase().replace('_', '-')}`;
-            
-            // Update confidence
-            const confidence = (prediction.confidence * 100).toFixed(1);
-            document.getElementById('confidence').textContent = `Confidence: ${confidence}%`;
-            
-            // Show alerts
-            if (prediction.alert_message) {
-                document.getElementById('alert-message').innerHTML = prediction.alert_message;
-                document.getElementById('alert-message').style.display = 'block';
-                showAlert(prediction.alert_message, 'alert');
-            }
-            
-            // Update price levels
-            if (prediction.levels) {
-                document.getElementById('current-price').textContent = `$${prediction.levels.current_price.toLocaleString('en-US')}`;
-                document.getElementById('entry-price').textContent = `$${prediction.levels.entry.toLocaleString('en-US')}`;
-                document.getElementById('stop-loss').textContent = `$${prediction.levels.stop_loss.toLocaleString('en-US')}`;
-                document.getElementById('target-1').textContent = `$${prediction.levels.target_1.toLocaleString('en-US')}`;
-                document.getElementById('target-2').textContent = `$${prediction.levels.target_2.toLocaleString('en-US')}`;
-            }
-            
-            // Update trade suggestion
-            if (prediction.trade_suggestion) {
-                const suggestion = prediction.trade_suggestion;
-                document.getElementById('trade-suggestion').innerHTML = `
-                    <p><strong>Action:</strong> ${suggestion.action}</p>
-                    <p><strong>Position Size:</strong> ${suggestion.size}</p>
-                    <p><strong>Reason:</strong> ${suggestion.reason}</p>
-                    <p><strong>Urgency:</strong> ${suggestion.urgency}</p>
-                `;
-            }
-            
-            // Update timestamp
-            document.getElementById('last-update').textContent = `Last updated: ${prediction.last_update}`;
-        }
-        
-        function updateSystemStatus(status) {
-            let statusHTML = '';
-            
-            if (status.status === 'ready') {
-                statusHTML = `
-                    <p>✅ <strong>System Ready</strong></p>
-                    <p>🤖 AI Model: Loaded</p>
-                    <p>⏰ Uptime: ${status.uptime_minutes} minutes</p>
-                    <p>🔄 Next Update: ${status.next_update}</p>
-                `;
-            } else if (status.status === 'training') {
-                statusHTML = `
-                    <p>🔄 <strong>Training AI Model</strong></p>
-                    <p>📊 Progress: ${status.training_progress}%</p>
-                    <p>⏰ Please wait...</p>
-                `;
-            } else {
-                statusHTML = `
-                    <p>🔄 <strong>System Starting</strong></p>
-                    <p>📊 Loading components...</p>
-                `;
-            }
-            
-            document.getElementById('system-status').innerHTML = statusHTML;
-        }
-        
-        function updateChart(chartData) {
-            const ctx = document.getElementById('priceChart').getContext('2d');
-            
-            if (priceChart) {
-                priceChart.destroy();
-            }
-            
-            priceChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: chartData.timestamps,
-                    datasets: [
-                        {
-                            label: 'BTC Price',
-                            data: chartData.prices,
-                            borderColor: '#00b4db',
-                            backgroundColor: 'rgba(0, 180, 219, 0.1)',
-                            borderWidth: 2,
-                            fill: true
-                        },
-                        {
-                            label: 'EMA 8',
-                            data: chartData.ema_8,
-                            borderColor: '#50fa7b',
-                            borderWidth: 1,
-                            fill: false
-                        },
-                        {
-                            label: 'EMA 21',
-                            data: chartData.ema_21,
-                            borderColor: '#ffb86c',
-                            borderWidth: 1,
-                            fill: false
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            labels: { color: '#f8f8f2' }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            grid: { color: 'rgba(255,255,255,0.1)' },
-                            ticks: { color: '#8892b0' }
-                        },
-                        y: {
-                            grid: { color: 'rgba(255,255,255,0.1)' },
-                            ticks: { color: '#8892b0' }
-                        }
-                    }
-                }
-            });
-        }
-        
-        function fetchData() {
-            fetch('/api/data')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        updateDashboard(data);
-                    }
-                })
-                .catch(error => {
-                    console.log('Fetching data...');
-                });
-        }
-        
-        // Start updates
-        fetchData();
-        setInterval(fetchData, 10000);
-        
-        // Show initial message
-        showAlert('🤖 Bitcoin AI System Started! Learning from real market data...');
-    </script>
-</body>
-</html>
+              // targets & RR
+              if(p.targets && p.targets.length>0){ document.getElementById('target_1').textContent = '$'+Number(p.targets[0]).toLocaleString(); if(p.targets[1]) document.getElementById('target_2').textContent = '$'+Number(p.targets[1]).toLocaleString(); }
+              document.getElementById('risk_reward').textContent = p.risk_reward!=null ? p.risk_reward : '--';
+
+              document.getElementById('trend_strength').textContent = p.trend_strength!=null ? p.trend_strength : '--';
+              document.getElementById('volatility').textContent = p.volatility!=null ? p.volatility : '--';
+              document.getElementById('breakout_probability').textContent = p.breakout_probability!=null ? (Number(p.breakout_probability).toFixed(3)) : '--';
+
+              // trade suggestion
+              if(p.trade_suggestion){ document.getElementById('trade_suggestion').innerHTML = `<strong>${p.trade_suggestion.action}</strong> — ${p.trade_suggestion.reason} (size: ${p.trade_suggestion.size})`; }
+
+              // system status
+              if(p.system_status){ const s = p.system_status; document.getElementById('system_status').innerHTML = `Status: ${s.status} • Training: ${s.training_progress || 0}% • Uptime: ${s.uptime_minutes || 0}m`; }
+
+              // performance
+              if(p.performance){ document.getElementById('total_trades').textContent = p.performance.total_trades || 0; document.getElementById('success_rate').textContent = p.performance.success_rate!=null ? (p.performance.success_rate*100).toFixed(1)+'%' : '--'; document.getElementById('avg_conf').textContent = p.performance.avg_confidence!=null ? (p.performance.avg_confidence*100).toFixed(1)+'%' : '--'; if(p.performance.series) renderPerf(p.performance.series); }
+
+              // charts
+              if(p.chart){ if(p.chart.timestamps && p.chart.prices) renderLine(p.chart.timestamps, p.chart.prices); if(p.chart.candles && p.chart.candles.length) renderCandles(p.chart.candles); }
+              drawGauge('confGauge', Number(p.confidence||0));
+
+              // data source badge
+              const ds = document.getElementById('data-source'); if(ds) ds.textContent = 'Source: '+(source||'LIVE');
+            }catch(e){ console.warn('applyPayload failed', e); }
+          }
+
+          // fetch prediction
+          async function fetchPrediction(){
+            try{
+              const res = await fetch('/api/prediction'); if(!res.ok) throw new Error('HTTP '+res.status); const p = await res.json(); window._demo_active = false; applyPayload(p,'LIVE'); document.getElementById('alert').style.display='none';
+            }catch(err){ console.warn('live fetch failed',err); document.getElementById('alert').textContent = 'Live data temporarily unavailable — showing last known or demo. Click Refresh.'; document.getElementById('alert').style.display='block'; }
+          }
+
+          async function showDemo(){ try{ const res = await fetch('/api/demo'); const p = await res.json(); window._demo_active = true; applyPayload(p,'DEMO'); document.getElementById('alert').style.display='none'; setTimeout(()=>{ if(window._demo_active){ window._demo_active=false; fetchPrediction(); } },15000); }catch(e){console.warn('demo fetch failed',e);} }
+
+          document.getElementById('demoBtn').addEventListener('click', showDemo);
+          document.getElementById('refreshBtn').addEventListener('click', ()=>{ window._demo_active=false; fetchPrediction(); });
+
+          // start
+          fetchPrediction(); setInterval(()=>{ if(!window._demo_active) fetchPrediction(); },3000);
+        </script>
+      </body>
+      </html>
